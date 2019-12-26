@@ -1,8 +1,6 @@
 # state
 
-State is a state manager for golang applications.
-
-The package provides a simple mechanism for controlling application's lifecycle, allowing easy to manage **graceful shutdown**, **waiting** for completion, **error propagation** and **custom states** creation.
+The package provides a simple mechanism for managing application's background jobs, allowing easy to manage **graceful shutdown**, **waiting** for completion, **error propagation** and **custom states** creation.
 
 
 ## Features
