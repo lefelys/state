@@ -39,6 +39,7 @@ func withValue(key, value interface{}, children ...State) *valueState {
 	if !reflect.TypeOf(key).Comparable() {
 		panic("state value key is not comparable")
 	}
+
 	return &valueState{
 		group: merge(children...),
 		key:   key,

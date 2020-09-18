@@ -62,7 +62,7 @@ import (
 // State's methods may be called by multiple goroutines simultaneously.
 type State interface {
 	// Err returns the first encountered error in this state.
-	// During propagating error from bottom to top, it is being annotated
+	// While error is propagated from bottom to top, it is being annotated
 	// by annotation states in a chain. Annotation uses introduced in
 	// go 1.13 errors wrapping.
 	//
@@ -85,6 +85,15 @@ type State interface {
 	// There is a chance that the shutdown will complete during that check -
 	// in this case, it is considered as fully completed and returns nil.
 	Shutdown(ctx context.Context) error
+
+	// Ready returns a channel that signals that all states in tree are
+	// ready. If there is no readiness states in the tree - state is considered
+	// as ready by default.
+	//
+	// If some readiness state in the tree didn't send Ok signal -
+	// returned channel blocks forever. It is caller's responsibility to
+	// handle possible block.
+	Ready() <-chan struct{}
 
 	// Value returns the first found value in this state for key,
 	// or nil if no value is associated with key. The tree is searched

@@ -9,8 +9,8 @@ type group struct {
 	states  []State
 	toClose map[int]struct{}
 
-	done     chan struct{}
-	finished chan struct{}
+	done, finished chan struct{}
+	ready          chan struct{}
 
 	sync.RWMutex
 }
@@ -47,6 +47,7 @@ func merge(states ...State) *group {
 			// already closed
 		default:
 			toClose[i] = struct{}{}
+
 			addToCloseStream(done, s)
 		}
 	}
@@ -78,6 +79,28 @@ func (g *group) Wait() {
 	for _, m := range g.states {
 		m.Wait()
 	}
+}
+
+func (g *group) Ready() <-chan struct{} {
+	g.Lock()
+	defer g.Unlock()
+
+	if g.ready != nil {
+		// To avoid memory leaks - ready channel is created only once
+		return g.ready
+	}
+
+	g.ready = make(chan struct{})
+
+	go func() {
+		for _, m := range g.states {
+			<-m.Ready()
+		}
+
+		close(g.ready)
+	}()
+
+	return g.ready
 }
 
 func (g *group) close() {

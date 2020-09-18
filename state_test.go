@@ -26,6 +26,11 @@ func TestParallel(t *testing.T) {
 		// Wait
 		t.Run("Wait", WaitTest)
 
+		// Readiness
+		t.Run("ReadinessWrap", ReadinessWrapTest)
+		t.Run("ReadinessSuccessiveOk", ReadinessSuccessiveOkTest)
+		t.Run("ReadinessSuccessiveReady", ReadinessSuccessiveReadyTest)
+
 		// Value
 		t.Run("ValueWrap", ValueWrapTest)
 		t.Run("ValueChildren", ValueChildrenTest)
@@ -58,6 +63,7 @@ func TestParallel(t *testing.T) {
 		t.Run("DependencyShutdownParentTimeout", DependencyShutdownParentTimeoutTest)
 		t.Run("DependencyShutdownUnclosed", DependencyShutdownUnclosedTest)
 		t.Run("DependencyWait", DependencyWaitTest)
+		t.Run("DependencyReadiness", DependencyReadinessTest)
 		t.Run("DependencyErrorParent", DependencyErrorParentTest)
 		t.Run("DependencyErrorChildren", DependencyErrorChildrenTest)
 		t.Run("DependencyErrorNil", DependencyErrorNilTest)
@@ -78,6 +84,9 @@ const (
 	errTimeout       = "unexpected timeout of shutdown state"
 	errNotWaited     = "wait state didn't wait"
 	errFinishWaiting = "wait state didn't finish waiting"
+	errInitReady     = "readiness state initialized as ready"
+	errNotReady      = "readiness state isn't ready"
+	errReady         = "unexpected readiness of readiness state"
 )
 
 func runShutdownable(tail ShutdownTail) (okDone chan struct{}) {
@@ -94,6 +103,7 @@ func runShutdownable(tail ShutdownTail) (okDone chan struct{}) {
 
 func runWaitable(tail WaitTail) (okWait chan struct{}) {
 	okWait = make(chan struct{})
+
 	tail.Add(1)
 
 	go func() {
@@ -104,32 +114,37 @@ func runWaitable(tail WaitTail) (okWait chan struct{}) {
 	return
 }
 
-func isDone(cc ...chan struct{}) bool {
+// checks any of passed channels are closed
+func hasClosed(cc ...<-chan struct{}) bool {
 	for _, c := range cc {
 		select {
 		case <-c:
+			return true
 		default:
-			return false
 		}
 	}
-	return true
+
+	return false
 }
 
-func isNotDone(cc ...<-chan struct{}) bool {
+// checks any of passed channels are not closed
+func hasNotClosed(cc ...<-chan struct{}) bool {
 	for _, c := range cc {
 		select {
 		case <-c:
-			return false
 		default:
+			return true
 		}
 	}
-	return true
+
+	return false
 }
 
 func closeChanAndPropagate(cc ...chan struct{}) {
 	for _, c := range cc {
 		close(c)
 	}
+
 	time.Sleep(failTimeout)
 }
 
@@ -137,6 +152,7 @@ func closeChanAndPropagate(cc ...chan struct{}) {
 
 func GroupCloseTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown()
@@ -151,15 +167,16 @@ func GroupCloseTest(t *testing.T) {
 	closeChanAndPropagate(okDone1, okDone2)
 
 	switch {
-	case isNotDone(st1.end, st2.end, st3.done):
+	case hasNotClosed(st1.end, st2.end, st3.done):
 		t.Error(errNotClosed)
-	case isNotDone(st1.done, st2.done, st3.finished):
+	case hasNotClosed(st1.done, st2.done, st3.finished):
 		t.Error(errNotFinished)
 	}
 }
 
 func GroupSuccessiveCloseTest(t *testing.T) {
 	t.Parallel()
+
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("successive close call caused panic")
@@ -181,6 +198,7 @@ func GroupSuccessiveCloseTest(t *testing.T) {
 
 func GroupErrorTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		err = errors.New("test")
 		st1 = withError(err)
@@ -202,6 +220,7 @@ func GroupErrorTest(t *testing.T) {
 
 func GroupNilChildTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = emptyState{}
 		st2 = merge(st1, nil)
@@ -221,6 +240,7 @@ func GroupNilChildTest(t *testing.T) {
 
 func ShutdownWrapTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown(st1)
@@ -231,7 +251,7 @@ func ShutdownWrapTest(t *testing.T) {
 		okDone3 = runShutdownable(st3)
 	)
 
-	if isDone(
+	if hasClosed(
 		st1.end, st2.end, st3.end,
 		st1.done, st2.done, st3.done,
 	) {
@@ -242,48 +262,49 @@ func ShutdownWrapTest(t *testing.T) {
 	time.Sleep(failTimeout)
 
 	switch {
-	case isNotDone(st1.end):
+	case hasNotClosed(st1.end):
 		t.Error(errNotClosed)
-	case isDone(st2.end, st3.end):
+	case hasClosed(st2.end, st3.end):
 		t.Error(errClosed)
-	case isDone(st1.done, st2.done, st3.done):
+	case hasClosed(st1.done, st2.done, st3.done):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone1)
 
 	switch {
-	case isNotDone(st2.end):
+	case hasNotClosed(st2.end):
 		t.Error(errNotClosed)
-	case isNotDone(st1.done):
+	case hasNotClosed(st1.done):
 		t.Error(errNotFinished)
-	case isDone(st3.end):
+	case hasClosed(st3.end):
 		t.Error(errClosed)
-	case isDone(st2.done, st3.done):
+	case hasClosed(st2.done, st3.done):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone2)
 
 	switch {
-	case isNotDone(st2.done):
+	case hasNotClosed(st2.done):
 		t.Error(errNotFinished)
-	case isNotDone(st3.end):
+	case hasNotClosed(st3.end):
 		t.Error(errNotClosed)
-	case isDone(st3.done):
+	case hasClosed(st3.done):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone3)
 
 	// st3 must be done
-	if isNotDone(st3.done) {
+	if hasNotClosed(st3.done) {
 		t.Error(errNotFinished)
 	}
 }
 
 func ShutdownSuccessiveDoneTest(t *testing.T) {
 	t.Parallel()
+
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("successive Done call caused panic")
@@ -304,6 +325,7 @@ func ShutdownSuccessiveDoneTest(t *testing.T) {
 
 func ShutdownSuccessiveCallTest(t *testing.T) {
 	t.Parallel()
+
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("successive Shutdown call caused panic")
@@ -335,6 +357,7 @@ func ShutdownSuccessiveCallTest(t *testing.T) {
 
 func ShutdownTimeoutTest(t *testing.T) {
 	t.Parallel()
+
 	st := withShutdown()
 
 	// blocked finish
@@ -351,6 +374,7 @@ func ShutdownTimeoutTest(t *testing.T) {
 
 func ShutdownUnclosedTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown(st1)
@@ -382,6 +406,7 @@ func ShutdownUnclosedTest(t *testing.T) {
 
 func WaitTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withWait()
 		st2 = withWait(st1)
@@ -401,13 +426,13 @@ func WaitTest(t *testing.T) {
 
 	time.Sleep(failTimeout)
 
-	if isDone(done) {
+	if hasClosed(done) {
 		t.Error(errNotWaited)
 	}
 
 	closeChanAndPropagate(okDone1, okDone2)
 
-	if isDone(done) {
+	if hasClosed(done) {
 		t.Error(errNotWaited)
 	}
 
@@ -415,8 +440,107 @@ func WaitTest(t *testing.T) {
 
 	time.Sleep(failTimeout)
 
-	if isNotDone(done) {
+	if hasNotClosed(done) {
 		t.Error(errFinishWaiting)
+	}
+}
+
+// Readiness
+
+func ReadinessWrapTest(t *testing.T) {
+	t.Parallel()
+
+	var (
+		st1 = withReadiness()
+		st2 = withReadiness(st1)
+		st3 = withReadiness(st2)
+	)
+
+	if hasClosed(
+		st1.ready, st2.ready, st3.ready,
+	) {
+		t.Error(errInitReady)
+	}
+
+	st1ReadyC := st1.Ready()
+	st2ReadyC := st2.Ready()
+	st3ReadyC := st3.Ready()
+
+	st3.Ok()
+
+	time.Sleep(failTimeout)
+
+	switch {
+	case hasNotClosed(st3.ready):
+		t.Error(errNotReady)
+	case hasClosed(st1.ready, st2.ready, st1ReadyC, st2ReadyC, st3ReadyC):
+		t.Error(errReady)
+	}
+
+	st2.Ok()
+	time.Sleep(failTimeout)
+
+	switch {
+	case hasNotClosed(st2.ready, st3.ready):
+		t.Error(errNotReady)
+	case hasClosed(st1.ready, st1ReadyC, st2ReadyC, st3ReadyC):
+		t.Error(errReady)
+	}
+
+	st1.Ok()
+	time.Sleep(failTimeout)
+
+	if hasNotClosed(st1.ready, st2.ready, st3.ready, st1ReadyC, st2ReadyC, st3ReadyC) {
+		t.Error(errNotReady)
+	}
+}
+
+func ReadinessSuccessiveOkTest(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("successive Ok call caused panic")
+		}
+	}()
+
+	st1 := withReadiness()
+
+	st1.Ok()
+	st1.Ok()
+	st1.Ok()
+	readyC := st1.Ready()
+
+	time.Sleep(failTimeout)
+
+	if hasNotClosed(readyC) {
+		t.Error(errNotReady)
+	}
+}
+
+func ReadinessSuccessiveReadyTest(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("successive Ready call caused panic")
+		}
+	}()
+
+	st1 := withReadiness()
+	st1.Ok()
+	readyC := st1.Ready()
+
+	time.Sleep(failTimeout)
+
+	if hasNotClosed(readyC) {
+		t.Error(errNotReady)
+	}
+
+	readyC = st1.Ready()
+
+	if hasNotClosed(readyC) {
+		t.Error(errNotReady)
 	}
 }
 
@@ -426,6 +550,7 @@ type key string
 
 func ValueWrapTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		testKey   = key("test_key")
 		testValue = "test_value"
@@ -451,6 +576,7 @@ func ValueWrapTest(t *testing.T) {
 
 func ValueChildrenTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		testKey1   = key("test_key1")
 		testValue1 = "test_value2"
@@ -499,6 +625,7 @@ func ValueChildrenTest(t *testing.T) {
 
 func ValueNilPanicTest(t *testing.T) {
 	t.Parallel()
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("nil key did not panic")
@@ -510,6 +637,7 @@ func ValueNilPanicTest(t *testing.T) {
 
 func ValueComparablePanicTest(t *testing.T) {
 	t.Parallel()
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("incomparable key did not panic")
@@ -523,6 +651,7 @@ func ValueComparablePanicTest(t *testing.T) {
 
 func AnnotationErrorTest(t *testing.T) {
 	t.Parallel()
+
 	const annotation = "test"
 
 	var (
@@ -555,6 +684,7 @@ func AnnotationErrorTest(t *testing.T) {
 
 func AnnotationShutdownTimeoutTest(t *testing.T) {
 	t.Parallel()
+
 	const annotation = "test"
 
 	st1 := withShutdown()
@@ -580,6 +710,7 @@ func AnnotationShutdownTimeoutTest(t *testing.T) {
 
 func AnnotationChildShutdownTimeoutTest(t *testing.T) {
 	t.Parallel()
+
 	const annotation = "test"
 
 	st1 := withShutdown()
@@ -607,6 +738,7 @@ func AnnotationChildShutdownTimeoutTest(t *testing.T) {
 
 func AnnotationNilErrorTest(t *testing.T) {
 	t.Parallel()
+
 	const message = "test"
 
 	st1 := withError(nil)
@@ -619,6 +751,7 @@ func AnnotationNilErrorTest(t *testing.T) {
 
 func AnnotationNilShutdownErrorTest(t *testing.T) {
 	t.Parallel()
+
 	st1 := withShutdown()
 	st2 := withAnnotation("", st1)
 
@@ -637,6 +770,7 @@ func AnnotationNilShutdownErrorTest(t *testing.T) {
 
 func AnnotationUnclosedTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withAnnotation("", st1)
@@ -667,6 +801,7 @@ func AnnotationUnclosedTest(t *testing.T) {
 
 func ErrorTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		err1 = errors.New("error1")
 		err2 = errors.New("error2")
@@ -692,6 +827,7 @@ func ErrorTest(t *testing.T) {
 
 func ErrorGroupTest(t *testing.T) {
 	t.Parallel()
+
 	const annotation = "test"
 
 	var (
@@ -738,6 +874,7 @@ func ErrorGroupTest(t *testing.T) {
 
 func ErrorGroupErrorfTest(t *testing.T) {
 	t.Parallel()
+
 	const annotation = "test: %w"
 
 	var (
@@ -786,6 +923,7 @@ func ErrorGroupErrorfTest(t *testing.T) {
 
 func EmptyTest(t *testing.T) {
 	t.Parallel()
+
 	st1 := emptyState{}
 
 	if err := st1.Err(); err != nil {
@@ -797,6 +935,7 @@ func EmptyTest(t *testing.T) {
 	}
 
 	okDone1 := make(chan struct{})
+
 	go func() {
 		st1.Wait()
 		close(okDone1)
@@ -804,8 +943,13 @@ func EmptyTest(t *testing.T) {
 
 	time.Sleep(failTimeout)
 
-	if isNotDone(okDone1) {
+	if hasNotClosed(okDone1) {
 		t.Errorf("empty state blocked on wait")
+	}
+
+	readyC := st1.Ready()
+	if hasNotClosed(readyC) {
+		t.Errorf("empty state is not ready")
 	}
 
 	if value := st1.Value(""); value != nil {
@@ -813,6 +957,7 @@ func EmptyTest(t *testing.T) {
 	}
 
 	okDone2 := make(chan struct{})
+
 	go func() {
 		st1.close()
 		close(okDone2)
@@ -820,11 +965,11 @@ func EmptyTest(t *testing.T) {
 
 	time.Sleep(failTimeout)
 
-	if isNotDone(okDone2) {
+	if hasNotClosed(okDone2) {
 		t.Errorf("empty state blocked on close")
 	}
 
-	if isNotDone(st1.finishSig()) {
+	if hasNotClosed(st1.finishSig()) {
 		t.Errorf("empty state is not done")
 	}
 
@@ -837,6 +982,7 @@ func EmptyTest(t *testing.T) {
 
 func DependencyShutdownTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown()
@@ -849,7 +995,7 @@ func DependencyShutdownTest(t *testing.T) {
 
 	st4 := withDependency(st3, st1, st2)
 
-	if isDone(
+	if hasClosed(
 		st1.end, st2.end, st3.end,
 		st1.done, st2.done, st3.done,
 	) {
@@ -860,34 +1006,35 @@ func DependencyShutdownTest(t *testing.T) {
 	time.Sleep(failTimeout)
 
 	switch {
-	case isNotDone(st1.end, st2.end):
+	case hasNotClosed(st1.end, st2.end):
 		t.Error(errNotClosed)
-	case isDone(st3.end):
+	case hasClosed(st3.end):
 		t.Error(errClosed)
-	case isDone(st1.done, st2.done, st3.done):
+	case hasClosed(st1.done, st2.done, st3.done):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone1, okDone2)
 
 	switch {
-	case isNotDone(st3.end):
+	case hasNotClosed(st3.end):
 		t.Error(errNotClosed)
-	case isNotDone(st1.done, st2.done):
+	case hasNotClosed(st1.done, st2.done):
 		t.Error(errNotFinished)
-	case isDone(st3.done):
+	case hasClosed(st3.done):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone3)
 
-	if isNotDone(st3.done) {
+	if hasNotClosed(st3.done) {
 		t.Error(errNotFinished)
 	}
 }
 
 func DependencyShutdownChainTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown()
@@ -901,7 +1048,7 @@ func DependencyShutdownChainTest(t *testing.T) {
 	st4 := withDependency(st3, st1)
 	st4 = withDependency(st4, st2)
 
-	if isDone(
+	if hasClosed(
 		st1.end, st2.end, st3.end,
 		st1.done, st2.done, st3.done, st4.finished,
 	) {
@@ -912,47 +1059,48 @@ func DependencyShutdownChainTest(t *testing.T) {
 	time.Sleep(failTimeout)
 
 	switch {
-	case isNotDone(st2.end):
+	case hasNotClosed(st2.end):
 		t.Error(errNotClosed)
-	case isDone(st1.end, st3.end):
+	case hasClosed(st1.end, st3.end):
 		t.Error(errClosed)
-	case isDone(st1.done, st2.done, st3.done, st4.finished):
+	case hasClosed(st1.done, st2.done, st3.done, st4.finished):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone2)
 
 	switch {
-	case isNotDone(st1.end):
+	case hasNotClosed(st1.end):
 		t.Error(errNotClosed)
-	case isNotDone(st2.done):
+	case hasNotClosed(st2.done):
 		t.Error(errNotFinished)
-	case isDone(st3.end):
+	case hasClosed(st3.end):
 		t.Error(errClosed)
-	case isDone(st1.done, st3.done, st4.finished):
+	case hasClosed(st1.done, st3.done, st4.finished):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone1)
 
 	switch {
-	case isNotDone(st3.end):
+	case hasNotClosed(st3.end):
 		t.Error(errNotClosed)
-	case isNotDone(st1.done):
+	case hasNotClosed(st1.done):
 		t.Error(errNotFinished)
-	case isDone(st3.done, st4.finished):
+	case hasClosed(st3.done, st4.finished):
 		t.Error(errFinished)
 	}
 
 	closeChanAndPropagate(okDone3)
 
-	if isNotDone(st3.done, st4.finished) {
+	if hasNotClosed(st3.done, st4.finished) {
 		t.Error(errNotFinished)
 	}
 }
 
 func DependencyShutdownSuccessiveCloseTest(t *testing.T) {
 	t.Parallel()
+
 	defer func() {
 		if r := recover(); r != nil {
 			t.Errorf("successive close call caused panic")
@@ -977,6 +1125,7 @@ func DependencyShutdownSuccessiveCloseTest(t *testing.T) {
 
 func DependencyShutdownChildrenTimeoutTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = emptyState{}
@@ -997,6 +1146,7 @@ func DependencyShutdownChildrenTimeoutTest(t *testing.T) {
 
 func DependencyShutdownParentTimeoutTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown()
@@ -1019,6 +1169,7 @@ func DependencyShutdownParentTimeoutTest(t *testing.T) {
 
 func DependencyShutdownUnclosedTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withShutdown()
 		st2 = withShutdown()
@@ -1046,6 +1197,7 @@ func DependencyShutdownUnclosedTest(t *testing.T) {
 
 func DependencyWaitTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withWait()
 		st2 = withWait()
@@ -1067,25 +1219,77 @@ func DependencyWaitTest(t *testing.T) {
 
 	time.Sleep(failTimeout)
 
-	if isDone(done) {
+	if hasClosed(done) {
 		t.Error(errNotWaited)
 	}
 
 	closeChanAndPropagate(okDone1, okDone2)
 
-	if isDone(done) {
+	if hasClosed(done) {
 		t.Error(errNotWaited)
 	}
 
 	closeChanAndPropagate(okDone3)
 
-	if isNotDone(done) {
+	if hasNotClosed(done) {
 		t.Error(errNotWaited)
+	}
+}
+
+func DependencyReadinessTest(t *testing.T) {
+	t.Parallel()
+
+	var (
+		st1 = withReadiness()
+		st2 = withReadiness()
+		st3 = withReadiness()
+	)
+
+	st4 := withDependency(st3, st1, st2)
+
+	if hasClosed(
+		st1.ready, st2.ready, st3.ready,
+	) {
+		t.Error(errInitReady)
+	}
+
+	st1ReadyC := st1.Ready()
+	st2ReadyC := st2.Ready()
+	st3ReadyC := st3.Ready()
+	st4ReadyC := st4.Ready()
+
+	st1.Ok()
+
+	time.Sleep(failTimeout)
+
+	switch {
+	case hasNotClosed(st1.ready, st1ReadyC):
+		t.Error(errNotReady)
+	case hasClosed(st2.ready, st3.ready, st2ReadyC, st3ReadyC, st4ReadyC):
+		t.Error(errReady)
+	}
+
+	st2.Ok()
+	time.Sleep(failTimeout)
+
+	switch {
+	case hasNotClosed(st1.ready, st1ReadyC, st2.ready, st2ReadyC):
+		t.Error(errNotReady)
+	case hasClosed(st3.ready, st3ReadyC, st4ReadyC):
+		t.Error(errReady)
+	}
+
+	st3.Ok()
+	time.Sleep(failTimeout)
+
+	if hasNotClosed(st1.ready, st1ReadyC, st2.ready, st2ReadyC, st3.ready, st3ReadyC, st4ReadyC) {
+		t.Error(errNotReady)
 	}
 }
 
 func DependencyErrorParentTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		err1 = errors.New("error1")
 		err2 = errors.New("error2")
@@ -1110,6 +1314,7 @@ func DependencyErrorParentTest(t *testing.T) {
 
 func DependencyErrorChildrenTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		err1 = errors.New("error1")
 
@@ -1127,6 +1332,7 @@ func DependencyErrorChildrenTest(t *testing.T) {
 
 func DependencyErrorNilTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = withError(nil)
 		st2 = emptyState{}
@@ -1140,6 +1346,7 @@ func DependencyErrorNilTest(t *testing.T) {
 
 func DependencyValueParentTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		testKey   = key("test_key")
 		testValue = "test_value"
@@ -1167,6 +1374,7 @@ func DependencyValueParentTest(t *testing.T) {
 
 func DependencyValueChildrenTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		testKey   = key("test_key")
 		testValue = "test_value"
@@ -1194,6 +1402,7 @@ func DependencyValueChildrenTest(t *testing.T) {
 
 func DependencyAnnotationTest(t *testing.T) {
 	t.Parallel()
+
 	var (
 		st1 = emptyState{}
 		st2 = emptyState{}
