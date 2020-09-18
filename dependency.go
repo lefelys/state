@@ -10,6 +10,7 @@ type dependState struct {
 	parent   State
 
 	finished chan struct{}
+	ready    chan struct{}
 
 	sync.RWMutex
 }
@@ -53,10 +54,31 @@ func (d *dependState) Wait() {
 	d.parent.Wait()
 }
 
+func (d *dependState) Ready() <-chan struct{} {
+	d.Lock()
+	defer d.Unlock()
+
+	if d.ready != nil {
+		// To avoid memory leaks - ready channel is created only once
+		return d.ready
+	}
+
+	d.ready = make(chan struct{})
+
+	go func() {
+		<-d.children.Ready()
+		<-d.parent.Ready()
+		close(d.ready)
+	}()
+
+	return d.ready
+}
+
 func (d *dependState) Err() (err error) {
 	if err = d.parent.Err(); err != nil {
 		return err
 	}
+
 	for _, states := range d.children.states {
 		if err = states.Err(); err != nil {
 			return err

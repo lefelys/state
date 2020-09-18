@@ -22,6 +22,7 @@ func ExampleWithShutdown() {
 
 					// send a signal that the shutdown is complete
 					tail.Done()
+
 					return
 				case <-ticker.C:
 					// some job
@@ -44,6 +45,7 @@ func ExampleWithShutdown() {
 func ExampleWithShutdown_dependency() {
 	runJob := func(name string) State {
 		st, tail := WithShutdown()
+
 		go func() {
 			<-tail.End()
 
@@ -78,6 +80,7 @@ func ExampleWithShutdown_dependency() {
 func ExampleWithShutdown_dependencyWrap() {
 	st1 := func() State {
 		st, tail := WithShutdown()
+
 		go func() {
 			<-tail.End()
 			fmt.Println("shutdown job 1")
@@ -213,6 +216,7 @@ func ExampleWithAnnotation_shutdown() {
 func ExampleMerge() {
 	runJob := func(name string, duration time.Duration) State {
 		st, tail := WithShutdown()
+
 		go func() {
 			<-tail.End()
 
@@ -230,6 +234,7 @@ func ExampleMerge() {
 	st3 := runJob("job 3", 150*time.Millisecond)
 
 	st := Merge(st1, st2, st3)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
